@@ -5,11 +5,12 @@ import numpy as np
 import mnist_loader
 from scipy import signal
 
+
 class Cnn(object):
 
     def __init__(self):
         # Network structure
-        self.conv1 = ConvLayer(np.random.randn(20, 1, 3, 3))
+        self.conv1 = ConvLayer((27, 27), np.random.randn(20, 1, 3, 3))
         self.mp1 = MaxPoolingLayer(3)
         self.fc1 = FullyConnected(20 * 9 * 9, 100)
         self.fc2 = FullyConnected(100, 10)
@@ -31,13 +32,13 @@ class Cnn(object):
         for index in range(np.size(input_data, 0)):
             x, y = input_data[index]
 
-            test_results.append((np.argmax(self.feed_forward(x)), y))
+            test_results.append((np.argmax(self.feed_forward([x])), y))
             # if index % 10 == 0:
             #     print('{} sample accomplished'.format(index))
         return sum(int(x == y) for (x, y) in test_results)
 
     def back_prop(self, x, y):
-        result1 = self.conv1.feed_forward(x)
+        result1 = self.conv1.feed_forward(np.array([x]))
         result2, mpp1 = self.mp1.feed_forward(result1, record=True)
         result3 = np.reshape(result2, (20 * 9 * 9, 1))
         result4 = self.fc1.feed_forward(result3)
@@ -48,7 +49,7 @@ class Cnn(object):
         delta1 = self.sm.cost(result6, y)
 
         # compute the delta of different layer
-        delta2 = self.sm.last_layer_delta(delta1, result5)
+        delta2 = self.sm.last_layer_delta(delta1)
         delta3 = self.fc2.last_layer_delta(delta2, result4)
         delta4 = self.fc1.last_layer_delta(delta3, result3)
         delta5 = np.reshape(delta4, [20, 9, 9])
@@ -84,7 +85,7 @@ class Cnn(object):
         self.fc1.weights = np.array([w - (eta / len(mini_batch)) * nw for w, nw in zip(self.fc1.weights, nabla_w2)])
         self.fc1.biases = np.array([b - (eta / len(mini_batch)) * nb for b, nb in zip(self.fc1.biases, nabla_b2)])
 
-        self.conv1.template =\
+        self.conv1.template = \
             np.array([w - (eta / len(mini_batch)) * nw for w, nw in zip(self.conv1.template, nabla_w3)])
         self.conv1.biases = np.array([b - (eta / len(mini_batch)) * nb for b, nb in zip(self.conv1.biases, nabla_b3)])
 
@@ -165,57 +166,34 @@ class FullyConnected(object):
 class ConvLayer(object):
 
     # x will be like n frame of image
-    def __init__(self, template_input, stride=1):
+    def __init__(self, im_size, template_input, stride=1):
 
         # every template has a biases, n frame of x share the same biases
         self.template = template_input
-        self.biases = np.zeros(shape=[np.size(self.template, 0)])
+        self.biases = np.zeros(shape=[np.size(self.template, 0), im_size[0], im_size[1]])
         self.stride = stride
 
     # if input is like n frame of image and template has m tunnel, output will be like nxm frames of image
     # it is worthy to mention that first m frames of output correspond to the first frame of in input
     def feed_forward(self, layer_input):
 
-        if len(np.shape(layer_input)) != 3:
-            temp = np.zeros(shape=[1, np.size(layer_input, 0), np.size(layer_input, 1)])
-            temp[0] = layer_input
-            layer_input = temp
-
-        return self.relu(self.convolve(layer_input, self.template, self.stride))
+        return self.relu(self.convolve(layer_input, self.template) + self.biases)
 
     # compute the delta of last layer
     # delta will be like n_tunnel x y.shape() . output will be like n_tunnel x x.shape().
     # notice that y is multi-layer
     def last_layer_delta(self, delta, layer_input):
-        # result = np.zeros(np.shape(layer_input))
-
-        return self.convolve(delta, self.rotate_template()) * self.relu_diff(layer_input)
-
-    # Considered stride that not equal to 1
-    # def fill_delta(self, delta):
-    #
-    #     fill_delta = np.zeros(shape=(
-    #         len(delta[0]), len(delta[1]) * self.stride, len(delta[2]) * self.stride))
-    #
-    #     for index_tunnel in range(np.size(delta, 0)):
-    #         for index_row in range(np.size(delta, 1)):
-    #             for index_col in range(np.size(delta, 2)):
-    #                 fill_delta[
-    #                     index_tunnel, self.stride * (index_row + 1) - 1, self.stride * (index_col + 1) - 1] = \
-    #                     delta[index_tunnel, index_row, index_col]
-    #
-    #     return fill_delta
+        result = np.zeros(np.shape(layer_input))
+        for layer in range(np.size(self.template, 1)):
+            result[layer] = np.sum(signal.convolve((delta, self.template[:, layer, :, :]))) * self.relu_diff(layer_input)
+        return result
 
     def back_prop(self, delta, layer_input):
         # compute nabla_b
-        nabla_b = np.zeros(shape=np.shape(self.biases))
-
-        for n_tunnel in range(np.size(self.template, 0)):
-            nabla_b[n_tunnel] = sum(sum(delta[n_tunnel]))
+        nabla_b = delta
 
         # compute nabla_w
         nabla_w = np.zeros(shape=np.shape(self.template))
-
         # num of bits need to expand
         n_expand = int(np.floor(np.size(self.template, 2) / 2))
         n_start = int(np.floor(np.size(delta, 1) / 2))
@@ -230,7 +208,6 @@ class ConvLayer(object):
                                   anchor_c - n_start:anchor_c + n_start + 1]
 
                         nabla_w[n_tunnel, n_layer, index_r, index_c] = sum(sum(windows * delta[n_tunnel]))
-
         return nabla_w, nabla_b
 
     # mini_batch will be like [(delta1,layer_input1), (delta2,layer_input2), (delta3,layer_input3)....]
@@ -247,52 +224,19 @@ class ConvLayer(object):
         self.template = [w - (eta / len(mini_batch)) * nw for w, nw in zip(self.template, nabla_w)]
         self.biases = [b - (eta / len(mini_batch)) * nb for b, nb in zip(self.biases, nabla_b)]
 
-    def rotate_template(self):
-        result = np.zeros(shape=[np.size(self.template, 1), np.size(self.template, 0), np.size(self.template, 2),
-                                 np.size(self.template, 3)])
-
-        for index_i in range(np.size(self.template, 1)):
-            for index_j in range(np.size(self.template, 0)):
-                result[index_i][index_j] = np.rot90(np.rot90(self.template[index_j][index_i]))
-
-        return result
-
     # template will be like n x n_tunnel_input x template_height x template_width
     # n_tunnel_input is the number of tunnel of input image layer
     # im must be 3-dimensional, even though 1 picture
-
-    def convolve(self, im, template_input, stride=1):
-
-        if len(np.shape(template_input)) != 4:
-            temp = np.zeros(
-                shape=[1, np.size(template_input, 0), np.size(template_input, 1), np.size(template_input, 2)])
-            temp[0] = template_input
-            template_input = temp
-
-        n_tunnel = np.size(template_input, 0)
-
-        # output will be like (tunnel x size(im) )
-        result = np.zeros(shape=(n_tunnel, np.size(im, 1), np.size(im, 2)), dtype=float)
-
-        # num of bits need to expand
-        n_expand = int(np.floor(np.size(template_input, 2) / 2))
-        im_expended = np.pad(im, ((0, 0), (n_expand, n_expand), (n_expand, n_expand)), 'constant',
-                             constant_values=0)
-
-        for index_template in range(n_tunnel):
-            for index_r, anchor_r in enumerate(range(n_expand, n_expand + np.size(im, 1), stride)):
-                for index_c, anchor_c in enumerate(range(n_expand, n_expand + np.size(im, 2), stride)):
-                    # seize the windows
-                    windows = im_expended[:, anchor_r - n_expand:anchor_r + n_expand + 1,
-                              anchor_c - n_expand:anchor_c + n_expand + 1]
-
-                    result[index_template, index_r, index_c] = \
-                        sum(sum(sum(windows * template_input[index_template]))) + self.biases[index_template]
+    @staticmethod
+    def convolve(im, template_input):
+        template_size = np.size(template_input, 0)
+        result = np.zeros([template_size, np.size(template_input, 2), np.size(template_input, 3)])
+        for n in range(template_size):
+            result = signal.convolve(im, np.flip(template_input[n], (1, 2)), mode='same')
 
         return result
 
-    @staticmethod
-    def relu(z):
+    def relu(self, z):
         result = np.zeros(shape=np.shape(z))
 
         for n_tunnel in range(np.size(z, 0)):
@@ -370,7 +314,7 @@ class SoftMax(object):
             return layer_input / temp
 
     @staticmethod
-    def last_layer_delta(delta, layer_input):
+    def last_layer_delta(delta):
         return delta  # * sum(np.exp(layer_input))
 
     @staticmethod

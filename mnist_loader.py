@@ -9,7 +9,7 @@ import numpy as np
 
 def load_data():
 
-    with gzip.open('../CNN/data/27x27.pkl.gz', 'rb') as f:
+    with gzip.open('../CNN-Basic-Structure/data/27x27.pkl.gz', 'rb') as f:
         training_data, validation_data, test_data = pickle.load(f, encoding='bytes')
 
     return training_data, validation_data, test_data

@@ -3,7 +3,7 @@
 # import gzip
 import numpy as np
 import mnist_loader
-
+from scipy import signal
 
 class Cnn(object):
 

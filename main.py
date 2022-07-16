@@ -10,17 +10,17 @@ class Cnn(object):
 
     def __init__(self):
         # Network structure
-        self.conv1 = ConvLayer((27, 27), np.random.randn(20, 1, 3, 3))
+        self.conv1 = ConvLayer((27, 27), 0.1 * np.random.randn(5, 1, 3, 3))
         self.mp1 = MaxPoolingLayer(3)
-        self.fc1 = FullyConnected(20 * 9 * 9, 100)
-        self.fc2 = FullyConnected(100, 10)
+        self.fc1 = FullyConnected(5 * 9 * 9, 100, 0.1 * np.random.randn(100, 5 * 9 * 9))
+        self.fc2 = FullyConnected(100, 10, 0.1 * np.random.randn(10, 100))
         self.sm = SoftMax()
 
     # input_data size is 27x27
     def feed_forward(self, input_data):
         temp = self.conv1.feed_forward(input_data)
         temp, _ = self.mp1.feed_forward(temp)
-        temp = np.reshape(temp, (20 * 9 * 9, 1))
+        temp = np.reshape(temp, (5 * 9 * 9, 1))
         temp = self.fc1.feed_forward(temp)
         temp = self.fc2.feed_forward(temp)
         temp = self.sm.feed_forward(temp)
@@ -33,31 +33,30 @@ class Cnn(object):
             x, y = input_data[index]
 
             test_results.append((np.argmax(self.feed_forward([x])), y))
-            # if index % 10 == 0:
-            #     print('{} sample accomplished'.format(index))
+
         return sum(int(x == y) for (x, y) in test_results)
 
     def back_prop(self, x, y):
         result1 = self.conv1.feed_forward(np.array([x]))
         result2, mpp1 = self.mp1.feed_forward(result1, record=True)
-        result3 = np.reshape(result2, (20 * 9 * 9, 1))
+        result3 = np.reshape(result2, (5 * 9 * 9, 1))
         result4 = self.fc1.feed_forward(result3)
         result5 = self.fc2.feed_forward(result4)
         result6 = self.sm.feed_forward(result5)
 
-        # compute the cost
-        delta1 = self.sm.cost(result6, y)
+        # # compute the cost
+        # delta1 = self.sm.entrop_loss(y, result6)
 
         # compute the delta of different layer
-        delta2 = self.sm.last_layer_delta(delta1)
-        delta3 = self.fc2.last_layer_delta(delta2, result4)
-        delta4 = self.fc1.last_layer_delta(delta3, result3)
-        delta5 = np.reshape(delta4, [20, 9, 9])
-        delta6 = self.mp1.last_layer_delta(delta5, mpp1)
+        delta1 = self.sm.last_layer_delta(y, result6)
+        delta2 = self.fc2.last_layer_delta(delta1, result4)
+        delta3 = self.fc1.last_layer_delta(delta2, result3)
+        delta4 = np.reshape(delta3, [5, 9, 9])
+        delta5 = self.mp1.last_layer_delta(delta4, mpp1)
 
-        nabla_w1, nabla_b1 = self.fc2.back_prop(delta2, result4)
-        nabla_w2, nabla_b2 = self.fc1.back_prop(delta3, result3)
-        nabla_w3, nabla_b3 = self.conv1.back_prop(delta6, np.array([x]))
+        nabla_w1, nabla_b1 = self.fc2.back_prop(delta1, result4)
+        nabla_w2, nabla_b2 = self.fc1.back_prop(delta2, result3)
+        nabla_w3, nabla_b3 = self.conv1.back_prop(delta5, np.array([x]))
 
         return (nabla_w1, nabla_b1), (nabla_w2, nabla_b2), (nabla_w3, nabla_b3)
 
@@ -94,7 +93,7 @@ class Cnn(object):
         n = len(tr_data)
 
         for j in range(epochs):
-            np.random.shuffle(tr_data)
+            # np.random.shuffle(tr_data)
             # randomly sample training data
 
             # prepare all the data
@@ -109,8 +108,8 @@ class Cnn(object):
 
 class FullyConnected(object):
 
-    def __init__(self, x, y):
-        self.weights = np.random.randn(y, x)
+    def __init__(self, x, y, weights):
+        self.weights = weights
         self.biases = np.zeros((y, 1), dtype=float)
 
         # when it is feeding forward, all sample is computed
@@ -170,14 +169,14 @@ class ConvLayer(object):
 
         # every template has a biases, n frame of x share the same biases
         self.template = template_input
-        self.biases = np.zeros(shape=[np.size(self.template, 0), im_size[0], im_size[1]])
+        self.biases = np.zeros(np.size(self.template, 0))
         self.stride = stride
 
     # if input is like n frame of image and template has m tunnel, output will be like nxm frames of image
     # it is worthy to mention that first m frames of output correspond to the first frame of in input
     def feed_forward(self, layer_input):
 
-        return self.relu(self.convolve(layer_input, self.template) + self.biases)
+        return self.relu(self.convolve(layer_input, self.template))
 
     # compute the delta of last layer
     # delta will be like n_tunnel x y.shape() . output will be like n_tunnel x x.shape().
@@ -190,7 +189,9 @@ class ConvLayer(object):
 
     def back_prop(self, delta, layer_input):
         # compute nabla_b
-        nabla_b = delta
+        nabla_b = np.zeros(shape=np.shape(self.biases))
+        for n_tunnel in range(np.size(delta, 0)):
+            nabla_b[n_tunnel] = np.sum(delta[n_tunnel])
 
         # compute nabla_w
         nabla_w = np.zeros(shape=np.shape(self.template))
@@ -227,12 +228,11 @@ class ConvLayer(object):
     # template will be like n x n_tunnel_input x template_height x template_width
     # n_tunnel_input is the number of tunnel of input image layer
     # im must be 3-dimensional, even though 1 picture
-    @staticmethod
-    def convolve(im, template_input):
+    def convolve(self, im, template_input):
         template_size = np.size(template_input, 0)
-        result = np.zeros([template_size, np.size(template_input, 2), np.size(template_input, 3)])
+        result = np.zeros([template_size, np.size(im, 1), np.size(im, 2)])
         for n in range(template_size):
-            result = signal.convolve(im, np.flip(template_input[n], (1, 2)), mode='same')
+            result[n] = signal.convolve(im, np.flip(template_input[n], (1, 2)), mode='same') + self.biases[n]
 
         return result
 
@@ -306,20 +306,19 @@ class SoftMax(object):
         pass
 
     @staticmethod
-    def feed_forward(layer_input):
-        temp = sum(layer_input)
-        if temp < 1e-6:
-            return np.zeros(np.shape(layer_input))
-        else:
-            return layer_input / temp
+    def feed_forward(x):
+        output = x
+        output -= np.max(x)
+        output = np.exp(output) / np.sum(np.exp(output))
+        return output
 
     @staticmethod
-    def last_layer_delta(delta):
-        return delta  # * sum(np.exp(layer_input))
+    def last_layer_delta(y_p, y_label):
+        return y_label - y_p  # * sum(np.exp(layer_input))
 
     @staticmethod
-    def cost(output, y):
-        return output - y
+    def entrop_loss(y_p, y_label):
+        return np.sum(-y_label * np.log(y_p + 1e-5))
 
 
 class AveragePoolingLayer(object):
@@ -364,7 +363,8 @@ if __name__ == '__main__':
     # trimmed_training_data = test_data[0:100]
     # temp_test_data = [(x[0], mnist_loader.vectorized_result(x[1])) for x in trimmed_training_data]
 
-    my_cnn.sgd(training_data[0:6000], 10, 1000, 0.01, test_data[0:100])
+    my_cnn.sgd(training_data[0:60000], 50, 1000, 0.05, test_data[0:100])
+    # my_cnn.sgd(training_data[0:1], 100000, 1, 0.02)
 
     a = my_cnn.evaluate(test_data[0:100])
 

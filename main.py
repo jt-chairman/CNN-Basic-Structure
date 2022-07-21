@@ -366,6 +366,6 @@ if __name__ == '__main__':
     my_cnn.sgd(training_data[0:60000], 50, 1000, 0.05, test_data[0:100])
     # my_cnn.sgd(training_data[0:1], 100000, 1, 0.02)
 
-    a = my_cnn.evaluate(test_data[0:100])
+    aa = my_cnn.evaluate(test_data[0:100])
 
     c = 1
